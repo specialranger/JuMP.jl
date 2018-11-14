@@ -9,7 +9,6 @@
 # https://github.com/JuliaArrays/AxisArrays.jl/issues/117
 # https://github.com/JuliaArrays/AxisArrays.jl/issues/84
 
-
 struct JuMPArray{T,N,Ax,L<:NTuple{N,Dict}} <: AbstractArray{T,N}
     data::Array{T,N}
     axes::Ax
@@ -136,42 +135,36 @@ Base.IndexStyle(::Type{JuMPArray{T,N,Ax}}) where {T,N,Ax} = IndexAnyCartesian()
 @static if VERSION < v"0.7-"
     Base.broadcast(f::Function, A::JuMPArray) = JuMPArray(broadcast(f, A.data), A.axes, A.lookup)
 else
-    # This implementation follows the instructions at
-    # https://docs.julialang.org/en/latest/manual/interfaces/#man-interfaces-broadcasting-1
-    # for implementing broadcast. We eagerly evaluate expressions involving
-    # JuMPArrays, overriding operation fusion.  For now, nested (fused)
-    # broadcasts like f.(A .+ 1) don't work, and we don't support broadcasts
-    # where multiple JuMPArrays appear. This is a stopgap solution to get tests
-    # passing on Julia 0.7 and leaves lots of room for improvement.
-    struct JuMPArrayBroadcastStyle <: Broadcast.BroadcastStyle end
-    Base.BroadcastStyle(::Type{<:JuMPArray}) = JuMPArrayBroadcastStyle()
-    function Base.Broadcast.broadcasted(::JuMPArrayBroadcastStyle, f, args...)
-        array = find_jump_array(args)
-        if sum(arg isa JuMPArray for arg in args) > 1
-            error("Broadcast operations with multiple JuMPArrays are not yet " *
-                  "supported.")
-        end
-        result_data = broadcast(f, unpack_jump_array(args)...)
-        return JuMPArray(result_data, array.axes, array.lookup)
-    end
-    function find_jump_array(args::Tuple)
-        return find_jump_array(args[1], Base.tail(args))
-    end
-    find_jump_array(array::JuMPArray, rest) = array
-    find_jump_array(::Any, rest) = find_jump_array(rest)
-    function find_jump_array(broadcasted::Broadcast.Broadcasted)
-        error("Unsupported nested broadcast operation. JuMPArray supports " *
-              "only simple broadcast operations like f.(A) but not f.(A .+ 1).")
+    using Base.Broadcast: Broadcasted, ArrayStyle
+
+    Broadcast.BroadcastStyle(::Type{<:JuMPArray}) = ArrayStyle{JuMPArray}()
+
+    find_jump_arrays(::Any, rest...) = find_jump_arrays(rest...)
+    find_jump_arrays(x::Broadcasted, rest...) = find_jump_arrays(x.args..., rest...)
+    find_jump_arrays(x::JuMPArray, rest...) = (x, find_jump_arrays(rest...)...)
+    find_jump_arrays() = tuple()
+
+    function Base.similar(bc::Broadcasted{ArrayStyle{JuMPArray}}, ::Type{T}) where T
+        arrs = find_jump_arrays(bc.args...)
+        length(arrs) > 1 && _throw_too_many_jumparrays_error()
+        arr = first(arrs)
+        bc_size = map(length, axes(bc))
+        bc_size == size(arr) || _throw_jumparray_size_mismatch_error(bc_size, size(arr))
+        return JuMPArray(similar(Array{T}, bc_size), arr.axes, arr.lookup)
     end
 
-    function unpack_jump_array(args::Tuple)
-        return unpack_jump_array(args[1], Base.tail(args))
+    # TODO: Implement more support for broadcast to render the below errors obsolete.
+
+    @noinline function _throw_too_many_jumparrays_error()
+        error("Broadcasting over multiple JuMPArrays is not yet supported.")
     end
-    unpack_jump_array(args::Tuple{}) = ()
-    function unpack_jump_array(array::JuMPArray, rest)
-        return (array.data, unpack_jump_array(rest)...)
+
+    @noinline function _throw_jumparray_size_mismatch_error(output_size, input_size)
+        error("When broadcasting a function `f` over a JuMPArray `A`, it must ",
+              "hold true that `size(f.(A)) == size(A)`. The attempted broadcast ",
+              "operation failed because the output size was ", output_size,
+              " while the input size was ", input_size)
     end
-    unpack_jump_array(other::Any, rest) = (other, unpack_jump_array(rest)...)
 end
 
 Base.isempty(A::JuMPArray) = isempty(A.data)
