@@ -157,6 +157,11 @@ release (0.19.x or later):
 - The ability to solve the continuous relaxation (i.e. via
   `solve(model; relaxation = true)`) is not yet reimplemented ([issue](https://github.com/JuliaOpt/JuMP.jl/issues/1611)).
 
+Version 0.18.6 (May 24, 2019)
+-----------------------------
+
+   * Compatibility fix for Julia 1.2.
+
 Version 0.18.5 (December 1, 2018)
 ---------------------------------
 
